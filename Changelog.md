@@ -6,6 +6,9 @@ OpenCore Changelog
 - Updated builtin firmware versions for SMBIOS and the rest
 - Added macOS 13 support for `AvoidRuntimeDefrag` Booter quirk
 - Added injected kext bundle version printing in DEBUG builds
+- Added support for NVRAM reset and set default boot entry when using emulated NVRAM
+- Upgraded emulated NVRAM logout script to allow unsupervised installation of recent macOS OTA updates
+- Added emulated NVRAM driver allowing use separately from OpenDuet
 
 #### v0.8.1
 - Improved `ExtendBTFeatureFlags` quirk on newer macOS versions, thx @lvs1974
