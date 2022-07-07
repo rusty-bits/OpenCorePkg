@@ -253,6 +253,9 @@ InternalLogAddEntry (
   UINT32                      KeySize;
   UINT32                      DataSize;
   UINT32                      TotalSize;
+  UINT32                      OldOffset;
+  UINT32                      NewOffset;
+  UINTN                       WriteSize;
 
   AsciiVSPrint (
     Private->LineBuffer,
@@ -363,24 +366,45 @@ InternalLogAddEntry (
     // Write to internal buffer.
     //
 
+    STATIC_ASSERT (OC_LOG_BUFFER_SIZE <= MAX_UINT32, "log buffer size must fit within 32 bits");
+    OldOffset = (UINT32)AsciiStrLen (Private->AsciiBuffer);
+
     Status = AsciiStrCatS (Private->AsciiBuffer, Private->AsciiBufferSize, Private->TimingTxt);
     if (!EFI_ERROR (Status)) {
       Status = AsciiStrCatS (Private->AsciiBuffer, Private->AsciiBufferSize, Private->LineBuffer);
     }
 
+    NewOffset = (UINT32)AsciiStrLen (Private->AsciiBuffer);
+
     //
     // Write to a file.
-    // Always overwriting file completely is most reliable.
-    // I know it is slow, but fixed size write is more reliable with broken FAT32 driver.
     //
     if (((OcLog->Options & OC_LOG_FILE) != 0) && (OcLog->FileSystem != NULL)) {
       if (EfiGetCurrentTpl () <= TPL_CALLBACK) {
-        OcSetFileData (
-          OcLog->FileSystem,
-          OcLog->FilePath,
-          Private->AsciiBuffer,
-          (UINT32)Private->AsciiBufferSize
-          );
+        if (OcLog->LogFile != NULL) {
+          WriteSize = NewOffset - OldOffset;
+          OcLog->LogFile->Write (OcLog->LogFile, &WriteSize, &Private->AsciiBuffer[OldOffset]);
+          OcLog->LogFile->Flush (OcLog->LogFile);
+          if (WriteSize != NewOffset - OldOffset) {
+            DEBUG ((
+              DEBUG_VERBOSE,
+              "OCL: Log write truncated %u to %u\n",
+              NewOffset - OldOffset,
+              WriteSize
+              ));
+          }
+        } else {
+          //
+          // Always overwriting file completely is most reliable.
+          // It is slow, but fixed size write is more reliable with broken FAT32 driver.
+          //
+          OcSetFileData (
+            OcLog->FileSystem,
+            OcLog->FilePath,
+            Private->AsciiBuffer,
+            (UINT32)Private->AsciiBufferSize
+            );
+        }
       }
     }
 
@@ -567,12 +591,14 @@ OcConfigureLogProtocol (
   OC_LOG_PRIVATE_DATA  *Private;
   EFI_HANDLE           Handle;
   EFI_FILE_PROTOCOL    *LogRoot;
+  EFI_FILE_PROTOCOL    *LogFile;
   CHAR16               *LogPath;
 
   ASSERT (LogModules != NULL);
 
   if ((Options & (OC_LOG_FILE | OC_LOG_ENABLE)) == (OC_LOG_FILE | OC_LOG_ENABLE)) {
     LogRoot = NULL;
+    LogFile = NULL;
     LogPath = GetLogPath (LogPrefixPath);
 
     if (LogPath != NULL) {
@@ -594,6 +620,22 @@ OcConfigureLogProtocol (
         }
       }
 
+      if ((LogRoot != NULL) && ((Options & OC_LOG_UNSAFE) != 0)) {
+        Status = OcSafeFileOpen (
+                   LogRoot,
+                   &LogFile,
+                   LogPath,
+                   EFI_FILE_MODE_CREATE | EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+                   0
+                   );
+        if (EFI_ERROR (Status)) {
+          DEBUG ((DEBUG_ERROR, "OCL: Failure opening log file - %r\n", Status));
+          LogFile = NULL;
+          LogRoot->Close (LogRoot);
+          LogRoot = NULL;
+        }
+      }
+
       if (LogRoot == NULL) {
         FreePool (LogPath);
         LogPath = NULL;
@@ -601,6 +643,7 @@ OcConfigureLogProtocol (
     }
   } else {
     LogRoot = NULL;
+    LogFile = NULL;
     LogPath = NULL;
   }
 
@@ -619,6 +662,10 @@ OcConfigureLogProtocol (
       OcLog->FileSystem->Close (OcLog->FileSystem);
     }
 
+    if (OcLog->LogFile != NULL) {
+      OcLog->LogFile->Close (OcLog->LogFile);
+    }
+
     if (OcLog->FilePath != NULL) {
       FreePool (OcLog->FilePath);
     }
@@ -628,6 +675,7 @@ OcConfigureLogProtocol (
     OcLog->DisplayLevel = DisplayLevel;
     OcLog->HaltLevel    = HaltLevel;
     OcLog->FileSystem   = LogRoot;
+    OcLog->LogFile      = LogFile;
     OcLog->FilePath     = LogPath;
 
     Status = EFI_SUCCESS;
@@ -649,6 +697,7 @@ OcConfigureLogProtocol (
       Private->OcLog.DisplayLevel = DisplayLevel;
       Private->OcLog.HaltLevel    = HaltLevel;
       Private->OcLog.FileSystem   = LogRoot;
+      Private->OcLog.LogFile      = LogFile;
       Private->OcLog.FilePath     = LogPath;
 
       //
@@ -688,7 +737,10 @@ OcConfigureLogProtocol (
 
   if (LogRoot != NULL) {
     if (!EFI_ERROR (Status)) {
-      if (OC_LOG_PRIVATE_DATA_FROM_OC_LOG_THIS (OcLog)->AsciiBufferSize > 0) {
+      if (  ((Options & OC_LOG_UNSAFE) == 0)
+         && (OC_LOG_PRIVATE_DATA_FROM_OC_LOG_THIS (OcLog)->AsciiBufferSize > 0)
+            )
+      {
         OcSetFileData (
           LogRoot,
           LogPath,
@@ -697,6 +749,10 @@ OcConfigureLogProtocol (
           );
       }
     } else {
+      if (LogFile != NULL) {
+        LogFile->Close (LogFile);
+      }
+
       LogRoot->Close (LogRoot);
       FreePool (LogPath);
     }

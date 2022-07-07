@@ -21,7 +21,7 @@
 ///
 /// Current supported log protocol revision.
 ///
-#define OC_LOG_REVISION  0x01000A
+#define OC_LOG_REVISION  0x01000B
 
 ///
 /// The defines for the log flags.
@@ -33,11 +33,12 @@
 #define OC_LOG_VARIABLE     BIT4
 #define OC_LOG_NONVOLATILE  BIT5
 #define OC_LOG_FILE         BIT6
+#define OC_LOG_UNSAFE       BIT7
 #define OC_LOG_ALL_BITS     (\
   OC_LOG_ENABLE   | OC_LOG_CONSOLE     | \
   OC_LOG_DATA_HUB | OC_LOG_SERIAL      | \
   OC_LOG_VARIABLE | OC_LOG_NONVOLATILE | \
-  OC_LOG_FILE)
+  OC_LOG_FILE     | OC_LOG_UNSAFE )
 
 ///
 /// Maximum possible number of characters of log prefix including colon.
@@ -137,6 +138,7 @@ struct OC_LOG_PROTOCOL_ {
   UINTN                  DisplayLevel;  ///< The error level visible onscreen.
   UINTN                  HaltLevel;     ///< The error level causing CPU dead loop.
   EFI_FILE_PROTOCOL      *FileSystem;   ///< Log file system root, not owned.
+  EFI_FILE_PROTOCOL      *LogFile;      ///< Log file, owned. Unsafe logging only.
   CHAR16                 *FilePath;     ///< Log file path.
 };
 
